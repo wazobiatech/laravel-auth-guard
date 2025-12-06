@@ -1,0 +1,52 @@
+{
+    "name": "wazobia/laravel-auth-guard",
+    "description": "JWT and Project authentication middleware for Laravel with JWKS support",
+    "type": "library",
+    "license": "MIT",
+    "version": "0.0.1",
+    "authors": [
+        {
+            "name": "Wazobia Developer",
+            "email": "developer@wazobia.tech"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "illuminate/support": "^9.0|^10.0|^11.0|^12.0",
+        "illuminate/http": "^9.0|^10.0|^11.0|^12.0",
+        "illuminate/cache": "^9.0|^10.0|^11.0|^12.0",
+        "firebase/php-jwt": "^6.0",
+        "guzzlehttp/guzzle": "^7.0",
+        "phpseclib/phpseclib": "^3.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^7.0|^8.0",
+        "phpunit/phpunit": "^9.5|^10.0"
+    },
+    "suggest": {
+        "nuwave/lighthouse": "Required for GraphQL support (^6.0)",
+        "predis/predis": "Required for Redis caching support (^2.0)"
+    },
+    "autoload": {
+        "psr-4": {
+            "Wazobia\\LaravelAuthGuard\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Wazobia\\LaravelAuthGuard\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Wazobia\\LaravelAuthGuard\\AuthGuardServiceProvider"
+            ],
+            "aliases": {
+                "AuthGuard": "Wazobia\\LaravelAuthGuard\\Facades\\AuthGuard"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
