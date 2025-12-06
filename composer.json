@@ -1,5 +1,5 @@
 {
-    "name": "wazobia/laravel-auth-guard",
+    "name": "wazobiatech/laravel-auth-guard",
     "description": "JWT and Project authentication middleware for Laravel with JWKS support",
     "type": "library",
     "license": "MIT",
