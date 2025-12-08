@@ -25,7 +25,7 @@ class JwksService
     }
 
     /**
-     * Get public key for token verification
+     * Get public key for USER JWT verification (per-project key set)
      */
     public function getPublicKey(string $token, ?string $projectUuid): string
     {
@@ -37,6 +37,16 @@ class JwksService
         $header = json_decode(base64_decode($parts[0]), true);
         if (!isset($header['kid'])) {
             throw new JwtAuthenticationException('Missing key ID (kid) in token header');
+        }
+
+        if (!$projectUuid) {
+            try {
+                $payload = json_decode(base64_decode($parts[1]), true);
+                if (is_array($payload) && isset($payload['project_uuid'])) {
+                    $projectUuid = $payload['project_uuid'];
+                }
+            } catch (\Exception $e) {
+            }
         }
 
         $jwks = $this->fetchJWKS($projectUuid);
@@ -51,7 +61,7 @@ class JwksService
     }
 
     /**
-     * Fetch JWKS from endpoint
+     * Fetch per-project JWKS from Mercury
      */
     private function fetchJWKS(?string $projectUuid): array
     {
@@ -64,12 +74,11 @@ class JwksService
 
         $cacheKey = "{$this->cachePrefix}:jwks:{$projectUuid}";
         
-        // Check cache (10 minutes)
         return Cache::remember($cacheKey, 600, function () use ($projectUuid) {
             $path = "auth/projects/{$projectUuid}/.well-known/jwks.json";
             $url = "{$this->mercuryBaseUrl}/{$path}";
             
-           $timestamp = (string) (time() * 1000);
+            $timestamp = (string) round(microtime(true) * 1000);
             $signature = hash_hmac(
                 'sha256',
                 'GET' . "/{$path}" . $timestamp,
@@ -97,7 +106,6 @@ class JwksService
                 throw new JwtAuthenticationException('Invalid JWKS response: missing keys');
             }
 
-            // Normalize response
             if (!is_array($data['keys'])) {
                 $data['keys'] = [$data['keys']];
             }
@@ -127,7 +135,76 @@ class JwksService
     }
 
     /**
-     * Base64 URL decode
+     * Get public key for PROJECT TOKEN verification (global project key set)
+     */
+    public function getProjectTokenPublicKey(string $token): string
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) {
+            throw new JwtAuthenticationException('Invalid project token format');
+        }
+
+        $header = json_decode(base64_decode($parts[0]), true);
+        if (!isset($header['kid'])) {
+            throw new JwtAuthenticationException('Missing key ID (kid) in project token header');
+        }
+
+        $jwks = $this->fetchGlobalProjectJWKS();
+        foreach ($jwks['keys'] as $key) {
+            if ($key['kid'] === $header['kid']) {
+                return $this->jwkToPem($key);
+            }
+        }
+
+        throw new JwtAuthenticationException("Key {$header['kid']} not found in global project JWKS");
+    }
+
+    /**
+     * Fetch global project JWKS used for project token verification (cached ~5 hours)
+     */
+    private function fetchGlobalProjectJWKS(): array
+    {
+        $cacheKey = "{$this->cachePrefix}:jwks:project_global";
+        return Cache::remember($cacheKey, 18000, function () {
+            $path = 'auth/project/.well-known/jwks.json';
+            $url = "{$this->mercuryBaseUrl}/{$path}";
+
+            $timestamp = (string) round(microtime(true) * 1000);
+            $signature = hash_hmac(
+                'sha256',
+                'GET' . "/{$path}" . $timestamp,
+                $this->sharedSecret
+            );
+
+            $timeout = config('auth-guard.mercury.timeout', 10);
+            $response = Http::timeout($timeout)
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'User-Agent' => 'Laravel-AuthGuard/1.0',
+                    'X-Timestamp' => $timestamp,
+                    'X-Signature' => $signature,
+                ])
+                ->get($url);
+
+            if (!$response->successful()) {
+                throw new JwtAuthenticationException(
+                    "Global project JWKS endpoint returned {$response->status()}: {$response->body()}"
+                );
+            }
+
+            $data = $response->json();
+            if (!isset($data['keys'])) {
+                throw new JwtAuthenticationException('Invalid global project JWKS response: missing keys');
+            }
+            if (!is_array($data['keys'])) {
+                $data['keys'] = [$data['keys']];
+            }
+            return $data;
+        });
+    }
+
+    /**
+     * Base64 URL decode helper
      */
     private function base64UrlDecode(string $data): string
     {
@@ -136,77 +213,5 @@ class JwksService
             $data .= str_repeat('=', 4 - $remainder);
         }
         return base64_decode(strtr($data, '-_', '+/'));
-    }
-
-    /**
-     * Create token cache key - matches Node.js implementation
-     */
-    private function createTokenCacheKey(string $rawToken): string
-    {
-        $tokenHash = substr(hash('sha256', $rawToken), 0, 32);
-        return "validated_token:{$tokenHash}";
-    }
-
-    /**
-     * Cache validated token payload
-     */
-    public function cacheValidatedToken(array $payload, string $rawToken): void
-    {
-        try {
-            $cacheKey = $this->createTokenCacheKey($rawToken);
-            $cacheExpiryTime = config('auth-guard.cache.token_expiry', 3600); // Default 1 hour
-            
-            $cacheData = [
-                'payload' => $payload,
-                'cached_at' => time(),
-                'token_preview' => substr($rawToken, 0, 50) . '...', // For debugging
-            ];
-
-            Cache::put($cacheKey, $cacheData, $cacheExpiryTime);
-        } catch (\Exception $e) {
-            // Log error but don't throw - caching is not critical
-        }
-    }
-
-    /**
-     * Get cached validated token
-     */
-    public function getCachedToken(string $rawToken): ?array
-    {
-        try {
-            $cacheKey = $this->createTokenCacheKey($rawToken);
-            $cachedData = Cache::get($cacheKey);
-
-            if ($cachedData && is_array($cachedData) && isset($cachedData['payload'])) {
-                $payload = $cachedData['payload'];
-                
-                // Double check expiration (in case cache TTL and token TTL differ)
-                $now = time();
-                if (isset($payload['exp']) && $payload['exp'] < $now) {
-                    // Token expired, remove from cache
-                    Cache::forget($cacheKey);
-                    return null;
-                }
-                
-                return $payload;
-            }
-
-            return null;
-        } catch (\Exception $e) {
-            return null;
-        }
-    }
-
-    /**
-     * Clear cache for a specific token
-     */
-    public function clearTokenCache(string $rawToken): bool
-    {
-        try {
-            $cacheKey = $this->createTokenCacheKey($rawToken);
-            return Cache::forget($cacheKey);
-        } catch (\Exception $e) {
-            return false;
-        }
     }
 }

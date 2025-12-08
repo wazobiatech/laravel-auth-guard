@@ -1,56 +1,136 @@
-# Wazobia Laravel Auth Guard
+# Laravel Auth Guard
 
-A comprehensive JWT and Project authentication package for Laravel with JWKS support, Redis caching, and GraphQL integration.
+<div align="center">
 
-## Features
+![Laravel](https://img.shields.io/badge/Laravel-9%2B%20%7C%2010%20%7C%2011%20%7C%2012-FF2D20?style=for-the-badge&logo=laravel&logoColor=white)
+![PHP](https://img.shields.io/badge/PHP-8.0%2B-777BB4?style=for-the-badge&logo=php&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-Required-DC382D?style=for-the-badge&logo=redis&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)
 
-- 🔐 JWT authentication with JWKS support (RS512)
-- 🏢 Project/API key authentication
-- 🔄 Combined authentication (JWT + Project)
-- 💾 Redis caching for performance
-- 📊 GraphQL support (Laravel Lighthouse)
-- ⚡ Auto-discovery and zero-config setup
-- 🛡️ Token revocation support
-- 📝 Comprehensive logging
+**Enterprise-grade JWT and Project authentication middleware for Laravel applications**
 
-## Requirements
+[Installation](#installation) • [Configuration](#configuration) • [Usage](#usage) • [GraphQL Support](#graphql-setup-lighthouse) • [Documentation](#documentation)
 
-- PHP >= 8.0
-- Laravel >= 9.0
-- Redis (recommended for caching)
+</div>
 
-## Installation
+---
 
-### Via Composer
+## 🎯 Features
+
+- **JWT Authentication** - Secure user authentication with RS512 algorithm
+- **Project-Level Authentication** - HMAC-based project token validation
+- **Combined Auth** - Support for dual authentication (JWT + Project)
+- **JWKS Support** - Automatic public key rotation and caching
+- **GraphQL Directives** - First-class Lighthouse GraphQL integration
+- **Redis-Powered** - Fast token validation and revocation with Redis caching
+- **Token Revocation** - Built-in support for revoking compromised tokens
+- **Docker-Ready** - Works seamlessly in containerized environments
+- **Auto-Discovery** - Laravel package auto-discovery support
+
+---
+
+## 📋 Table of Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+  - [Redis Setup](#redis-setup)
+  - [Service Provider](#service-provider)
+- [GraphQL Setup](#graphql-setup-lighthouse)
+- [Usage](#usage)
+  - [REST API Routes](#rest-api-routes)
+  - [GraphQL Schema](#graphql-schema)
+  - [Resolvers](#graphql-resolvers)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Advanced Usage](#advanced-usage)
+- [Support](#support)
+
+---
+
+## ⚙️ Requirements
+
+| Requirement | Version |
+|-------------|---------|
+| PHP | `^8.0` |
+| Laravel | `^9.0 \| ^10.0 \| ^11.0 \| ^12.0` |
+| Redis | `Latest` |
+| Predis or PhpRedis | `Latest` |
+| Lighthouse GraphQL | `^6.0 \| ^7.0` *(optional)* |
+
+---
+
+## 📦 Installation
+
+### Step 1: Install the Package
 
 ```bash
 composer require wazobia/laravel-auth-guard
 ```
 
-### Publish Configuration (Optional)
+The service provider will be automatically registered via Laravel's package discovery.
+
+### Step 2: Install Redis Client
+
+**Option A: Predis (PHP Redis client)**
+```bash
+composer require predis/predis
+```
+
+**Option B: PhpRedis Extension (Better Performance)**
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install php-redis
+
+# Alpine Linux (Docker)
+apk add php81-pecl-redis
+
+# macOS
+pecl install redis
+```
+
+### Step 3: Publish Configuration
 
 ```bash
 php artisan vendor:publish --tag=auth-guard-config
 ```
 
-## Configuration
+This creates `config/auth-guard.php` in your project.
 
-Add the following to your `.env` file:
+---
 
-```env
-# Mercury Service (JWT/JWKS)
-MERCURY_BASE_URL=http://your-mercury-service.com
+## 🔧 Configuration
+
+### Environment Variables
+
+Add these required variables to your `.env` file:
+
+```properties
+# Mercury Authentication Service
+MERCURY_BASE_URL=https://mercury.{domain}.com
 MERCURY_TIMEOUT=10
 
-# Athens Service (Project Auth)
-ATHENS_BASE_URL=http://your-athens-service.com
-ATHENS_PROJECT_UUID=your-default-project-uuid
-ATHENS_TIMEOUT=10
+# HMAC Signature for JWKS Requests
+SIGNATURE_SHARED_SECRET=AAAA***************************************
+SIGNATURE_ALGORITHM=sha256
 
-# Shared Secret for HMAC
-SIGNATURE_SHARED_SECRET=your-shared-secret
+# Project Configuration
+NEXUS_ID=26337ab1-****-********-********
+SERVICE_ID=f4e2d3b1-****-****-****-************
+
+# Redis Configuration
+REDIS_CLIENT=predis
+REDIS_URL=redis://:password@localhost/0
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=null
+REDIS_DB=0
+REDIS_CACHE_DB=1
 
 # Cache Settings
+CACHE_EXPIRY_TIME=900
 AUTH_CACHE_TTL=900
 AUTH_CACHE_PREFIX=auth_guard
 AUTH_CACHE_DRIVER=redis
@@ -59,150 +139,496 @@ AUTH_CACHE_DRIVER=redis
 JWT_ALGORITHM=RS512
 JWT_LEEWAY=0
 
+# Custom Headers (Optional)
+AUTH_JWT_HEADER=Authorization
+AUTH_PROJECT_TOKEN_HEADER=x-project-token
+
 # Logging
 AUTH_GUARD_LOGGING=true
 AUTH_GUARD_LOG_CHANNEL=stack
-
-# Custom Headers (optional)
-AUTH_JWT_HEADER=Authorization
-AUTH_PROJECT_ID_HEADER=x-app-id
-AUTH_PROJECT_SECRET_HEADER=x-app-secret
 ```
 
-## Usage
+> **💡 Docker Users:** If using Docker Compose, set `REDIS_HOST=redis` (the service name), not `127.0.0.1`
 
-### Route Middleware
+### Redis Setup
 
-#### JWT Authentication Only
+Update `config/database.php`:
 
 ```php
-Route::middleware(['jwt.auth'])->group(function () {
-    Route::get('/user/profile', function (Request $request) {
-        $user = $request->auth_user;
-        return response()->json($user);
-    });
-});
+<?php
+
+return [
+    // ... other config
+
+    'redis' => [
+        'client' => env('REDIS_CLIENT', 'predis'),
+
+        'options' => [
+            'cluster' => env('REDIS_CLUSTER', 'redis'),
+            'prefix' => env('REDIS_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_').'_database_'),
+        ],
+
+        'default' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_DB', '0'),
+        ],
+
+        'cache' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_CACHE_DB', '1'),
+        ],
+        
+        'auth' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_DB', '0'),
+            'prefix' => '', // No prefix!
+        ],
+    ],
+];
 ```
 
-#### Project Authentication Only
+### Verify Redis Connection
 
-```php
-Route::middleware(['project.auth'])->group(function () {
-    Route::get('/project/info', function (Request $request) {
-        $project = $request->auth_project;
-        return response()->json($project);
-    });
-});
+```bash
+php artisan tinker
 ```
 
-#### Combined Authentication (JWT + Project)
-
+Test inside Tinker:
 ```php
-Route::middleware(['combined.auth'])->group(function () {
-    Route::get('/secure/data', function (Request $request) {
-        return response()->json([
-            'user' => $request->auth_user,
-            'project' => $request->auth_project,
-        ]);
-    });
-});
+Redis::ping();  // Should return: "+PONG"
+
+Redis::set('test', 'Hello');
+Redis::get('test');  // Should return: "Hello"
+
+exit
 ```
 
-### Controller Usage
+### Service Provider
+
+If not using auto-discovery, add to `config/app.php`:
 
 ```php
-namespace App\Http\Controllers;
+'providers' => [
+    // ...
+    Wazobia\LaravelAuthGuard\AuthGuardServiceProvider::class,
+],
+```
 
+---
+
+## 🎨 GraphQL Setup (Lighthouse)
+
+### Step 1: Install Lighthouse
+
+```bash
+composer require nuwave/lighthouse
+```
+
+### Step 2: Configure Directives
+
+Edit `config/lighthouse.php` and add the directive namespace:
+
+```php
+<?php
+
+return [
+    'namespaces' => [
+        'models' => ['App', 'App\\Models'],
+        'queries' => 'App\\GraphQL\\Queries',
+        'mutations' => 'App\\GraphQL\\Mutations',
+        'subscriptions' => 'App\\GraphQL\\Subscriptions',
+        'interfaces' => 'App\\GraphQL\\Interfaces',
+        'unions' => 'App\\GraphQL\\Unions',
+        'scalars' => 'App\\GraphQL\\Scalars',
+        
+        'directives' => [
+            'App\\GraphQL\\Directives',
+            'Wazobia\\LaravelAuthGuard\\GraphQL\\Directives', // ← Add this line
+        ],
+    ],
+];
+```
+
+### Step 3: Clear All Caches
+
+```bash
+php artisan cache:clear
+php artisan config:clear
+php artisan route:clear
+php artisan lighthouse:clear-cache
+composer dump-autoload
+```
+
+### Step 4: Validate Schema
+
+```bash
+php artisan lighthouse:validate-schema
+```
+
+---
+
+## 🚀 Usage
+
+### REST API Routes
+
+Create routes in `routes/api.php`:
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
 use Illuminate\Http\Request;
 
-class SecureController extends Controller
-{
-    public function __construct()
-    {
-        // Apply middleware to all methods
-        $this->middleware('combined.auth');
-        
-        // Or apply to specific methods
-        $this->middleware('jwt.auth')->only(['index', 'show']);
-        $this->middleware('project.auth')->only(['store']);
-    }
+// Public route (no authentication)
+Route::get('/public', function () {
+    return ['message' => 'Public endpoint'];
+});
 
-    public function index(Request $request)
-    {
-        $user = $request->auth_user;
-        $project = $request->auth_project;
-        
-        return response()->json([
-            'user_uuid' => $user['uuid'],
-            'user_email' => $user['email'],
-            'project_uuid' => $project['projectUuid'] ?? null,
-            'project_name' => $project['projectName'] ?? null,
-        ]);
-    }
-}
+// JWT Authentication only
+Route::middleware('jwt.auth')->group(function () {
+    Route::get('/user/profile', function (Request $request) {
+        $user = $request->user();
+        return [
+            'uuid' => $user->uuid,
+            'email' => $user->email,
+            'name' => $user->name,
+        ];
+    });
+});
+
+// Project Authentication only
+Route::middleware('project.auth')->group(function () {
+    Route::get('/project/info', function (Request $request) {
+        $project = $request->project;
+        return [
+            'project_uuid' => $project->project_uuid,
+            'enabled_services' => $project->enabled_services,
+        ];
+    });
+});
+
+// Combined Authentication (JWT + Project)
+Route::middleware('combined.auth')->group(function () {
+    Route::post('/secure/resource', function (Request $request) {
+        return [
+            'user' => $request->user(),
+            'project' => $request->project,
+            'message' => 'Both authentications passed'
+        ];
+    });
+});
 ```
 
-### GraphQL Support (Laravel Lighthouse)
+### GraphQL Schema
 
-If you have Laravel Lighthouse installed, the package automatically registers GraphQL directives:
+Create or update `graphql/schema.graphql`:
 
 ```graphql
 type Query {
-    # JWT authentication required
-    userProfile: User @jwtAuth
-    
-    # Project authentication required
-    projectData: Project @projectAuth
-    
-    # Both JWT and Project authentication required
-    sensitiveData: SecureData @combinedAuth
-    
-    # No authentication required
-    publicData: PublicInfo
+  # Public query
+  hello: String!
+  
+  # JWT authentication required
+  me: User! @jwtAuth
+  
+  # Project authentication required
+  projectInfo: Project! @projectAuth
+  
+  # Both authentications required
+  secureData: SecureData! @combinedAuth
 }
 
 type Mutation {
-    updateProfile(input: ProfileInput!): User @jwtAuth
-    createResource(input: ResourceInput!): Resource @combinedAuth
+  updateProfile(name: String!): User! @jwtAuth
+  updateProjectSettings(settings: JSON!): Project! @projectAuth
+  createResource(data: JSON!): Resource! @combinedAuth
 }
 
-On your resolver
-public function create($root, array $args, GraphQLContext $context, ResolveInfo $resolveInfo): array
-    {
-        Log::info('Creating', [
-            'auth_user' => $context->request->auth_user,
-            'auth_project' => $context->request->auth_project,
-            'args' => $args
-        ]);
-        ...continue ur execution/statements
-    }
+type User {
+  uuid: ID!
+  email: String!
+  name: String!
+}
+
+type Project {
+  project_uuid: ID!
+  enabled_services: [String!]!
+  secret_version: Int
+}
+
+type SecureData {
+  id: ID!
+  content: String!
+  user: User!
+  project: Project!
+}
 ```
 
-### Programmatic Usage
+### GraphQL Resolvers
+
+**app/GraphQL/Queries/Me.php**
+
+```php
+<?php
+
+namespace App\GraphQL\Queries;
+
+class Me
+{
+    public function __invoke($rootValue, array $args, $context)
+    {
+        $user = $context->request->user();
+        return [
+            'uuid' => $user->uuid,
+            'email' => $user->email,
+            'name' => $user->name,
+        ];
+    }
+}
+```
+
+**app/GraphQL/Queries/ProjectInfo.php**
+
+```php
+<?php
+
+namespace App\GraphQL\Queries;
+
+class ProjectInfo
+{
+    public function __invoke($rootValue, array $args, $context)
+    {
+        $project = $context->request->project;
+        
+        return [
+            'project_uuid' => $project->project_uuid,
+            'enabled_services' => $project->enabled_services,
+            'secret_version' => $project->secret_version,
+        ];
+    }
+}
+```
+
+---
+
+## 🧪 Testing
+
+### REST API with cURL
+
+**JWT Authentication**
+```bash
+curl -X GET http://localhost:8000/api/user/profile \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Accept: application/json"
+```
+
+**Project Authentication**
+```bash
+curl -X GET http://localhost:8000/api/project/info \
+  -H "x-project-token: YOUR_PROJECT_TOKEN" \
+  -H "Accept: application/json"
+```
+
+**Combined Authentication**
+```bash
+curl -X POST http://localhost:8000/api/secure/resource \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "x-project-token: YOUR_PROJECT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"data": "test"}'
+```
+
+### GraphQL Queries
+
+**Query with JWT Auth**
+```bash
+curl -X POST http://localhost:8000/graphql \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{"query":"{ me { uuid email name } }"}'
+```
+
+**Expected Response:**
+```json
+{
+  "data": {
+    "me": {
+      "uuid": "user-uuid-here",
+      "email": "user@example.com",
+      "name": "John Doe"
+    }
+  }
+}
+```
+
+### GraphQL Playground
+
+1. Access GraphQL Playground at `http://localhost:8000/graphql-playground`
+2. Add headers in the bottom left:
+
+```json
+{
+  "Authorization": "Bearer YOUR_JWT_TOKEN",
+  "x-project-token": "Bearer YOUR_PROJECT_TOKEN"
+}
+```
+
+3. Run queries:
+
+```graphql
+query {
+  me {
+    uuid
+    email
+    name
+  }
+  
+  projectInfo {
+    project_uuid
+    enabled_services
+  }
+}
+```
+
+---
+
+## 🔍 Troubleshooting
+
+<details>
+<summary><strong>❌ "No directive found for jwtAuth"</strong></summary>
+
+**Solution:**
+1. Add directive namespace to `config/lighthouse.php`
+2. Clear all caches:
+```bash
+php artisan config:clear
+php artisan lighthouse:clear-cache
+composer dump-autoload
+```
+</details>
+
+<details>
+<summary><strong>❌ "Class Predis\Client not found"</strong></summary>
+
+**Solution:**
+```bash
+composer require predis/predis
+php artisan config:clear
+```
+
+Or change `.env`:
+```properties
+REDIS_CLIENT=phpredis
+```
+</details>
+
+<details>
+<summary><strong>❌ "Could not connect to Redis"</strong></summary>
+
+**Solution:**
+
+1. Verify Redis is running:
+```bash
+redis-cli ping  # Should return: PONG
+```
+
+2. Check your `.env`:
+```properties
+# For Docker
+REDIS_HOST=redis
+
+# For local
+REDIS_HOST=127.0.0.1
+```
+
+3. Test connection:
+```bash
+php artisan tinker
+Redis::ping();
+```
+</details>
+
+<details>
+<summary><strong>❌ "JWKS endpoint returned 401"</strong></summary>
+
+**Solution:**
+
+Check that `SIGNATURE_SHARED_SECRET` in `.env` matches your Mercury service configuration.
+</details>
+
+<details>
+<summary><strong>❌ "Token has been revoked or expired"</strong></summary>
+
+**Solution:**
+
+The project token is either:
+- Not found in Redis (expired)
+- Manually revoked
+
+Generate a new project token from your provisioning service.
+</details>
+
+### Docker-Specific Issues
+
+**Redis Connection Refused**
+
+Update `docker-compose.yml`:
+```yaml
+services:
+  app:
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+```
+
+**PhpRedis Not Installed**
+
+Add to your `Dockerfile`:
+```dockerfile
+RUN pecl install redis && docker-php-ext-enable redis
+```
+
+Then rebuild:
+```bash
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+---
+
+## 🔥 Advanced Usage
+
+### Programmatic Token Validation
 
 ```php
 use Wazobia\LaravelAuthGuard\Services\JwtAuthService;
 use Wazobia\LaravelAuthGuard\Services\ProjectAuthService;
 
-class AuthController extends Controller
+class AuthController
 {
-    private JwtAuthService $jwtService;
-    private ProjectAuthService $projectService;
-    
-    public function __construct(
-        JwtAuthService $jwtService,
-        ProjectAuthService $projectService
-    ) {
-        $this->jwtService = $jwtService;
-        $this->projectService = $projectService;
-    }
-    
-    public function validateToken(Request $request)
+    public function validateJwt(JwtAuthService $jwtService, Request $request)
     {
         try {
-            // Validate JWT token
             $token = $request->bearerToken();
-            $user = $this->jwtService->authenticate($token);
+            $user = $jwtService->authenticate($token);
             
             return response()->json(['user' => $user]);
         } catch (\Exception $e) {
@@ -210,179 +636,70 @@ class AuthController extends Controller
         }
     }
     
-    public function revokeToken(Request $request)
+    public function validateProject(ProjectAuthService $projectService, Request $request)
     {
-        // Revoke a JWT token by its JTI
-        $jti = $request->input('jti');
-        $this->jwtService->revokeToken($jti);
-        
-        return response()->json(['message' => 'Token revoked']);
+        try {
+            $token = $request->header('x-project-token');
+            $serviceId = config('auth-guard.service_id');
+            
+            $project = $projectService->authenticateWithToken($token, $serviceId);
+            
+            return response()->json(['project' => $project]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 401);
+        }
     }
 }
 ```
 
-## Request Data Access
-
-After successful authentication, the middleware adds the following to the request:
-
-### JWT Authentication
-```php
-$request->auth_user = [
-    'uuid' => 'user-uuid',
-    'email' => 'user@example.com',
-    'name' => 'User Name',
-    'raw_payload' => [...] // Original JWT payload
-];
-
-// Also accessible via
-$request->user(); // Returns object
-```
-
-### Project Authentication
-```php
-$request->auth_project = [
-    'projectUuid' => 'project-uuid',
-    'projectName' => 'Project Name',
-    'raw_response' => [...] // Original Athens response
-];
-```
-
-## Error Responses
-
-All authentication failures return a 401 status with JSON:
-
-```json
-{
-    "error": "JWT Authentication failed",
-    "message": "Token expired"
-}
-```
-
-## Testing
-
-### Mocking Services
+### Token Revocation
 
 ```php
 use Wazobia\LaravelAuthGuard\Services\JwtAuthService;
-use Wazobia\LaravelAuthGuard\Services\ProjectAuthService;
 
-class AuthTest extends TestCase
-{
-    public function test_jwt_authentication()
-    {
-        $this->mock(JwtAuthService::class)
-            ->shouldReceive('authenticate')
-            ->once()
-            ->andReturn([
-                'uuid' => 'test-uuid',
-                'email' => 'test@example.com',
-                'name' => 'Test User',
-            ]);
-
-        $response = $this->withHeaders([
-            'Authorization' => 'Bearer test.jwt.token',
-        ])->get('/api/user/profile');
-
-        $response->assertStatus(200);
-        $response->assertJson([
-            'uuid' => 'test-uuid',
-            'email' => 'test@example.com',
-        ]);
-    }
+Route::post('/logout', function (JwtAuthService $jwtService, Request $request) {
+    $jti = $request->input('jti'); // JWT ID from token payload
+    $ttl = 3600; // Revoke for 1 hour
     
-    public function test_combined_authentication()
-    {
-        // Mock both services
-        $this->mock(JwtAuthService::class)
-            ->shouldReceive('authenticate')
-            ->andReturn([
-                'uuid' => 'user-uuid',
-                'email' => 'user@example.com',
-                'name' => 'Test User',
-            ]);
-            
-        $this->mock(ProjectAuthService::class)
-            ->shouldReceive('authenticate')
-            ->andReturn([
-                'projectUuid' => 'project-uuid',
-                'projectName' => 'Test Project',
-            ]);
-
-        $response = $this->withHeaders([
-            'Authorization' => 'Bearer test.jwt.token',
-            'x-app-id' => 'test-app-id',
-            'x-app-secret' => 'test-secret',
-        ])->get('/api/secure/data');
-
-        $response->assertStatus(200);
-    }
-}
+    $jwtService->revokeToken($jti, $ttl);
+    
+    return response()->json(['message' => 'Token revoked']);
+})->middleware('jwt.auth');
 ```
 
-## Advanced Configuration
+---
 
-### Custom Cache Keys
+## 📚 Documentation
 
-```php
-// config/auth-guard.php
-'cache' => [
-    'prefix' => 'my_app_auth',
-    'ttl' => 1800, // 30 minutes
-],
-```
+| Topic | Description |
+|-------|-------------|
+| **Middleware** | `jwt.auth`, `project.auth`, `combined.auth` |
+| **Directives** | `@jwtAuth`, `@projectAuth`, `@combinedAuth` |
+| **Services** | `JwtAuthService`, `ProjectAuthService` |
+| **Caching** | Redis-based JWKS and token caching |
 
-### Custom Headers
+---
 
-```php
-// config/auth-guard.php
-'headers' => [
-    'jwt' => 'X-Access-Token',
-    'project_id' => 'X-API-Key',
-    'project_secret' => 'X-API-Secret',
-],
-```
+## 🤝 Support
 
-### Disable Logging
+For issues or questions:
 
-```php
-// config/auth-guard.php
-'logging' => [
-    'enabled' => false,
-],
-```
+- **GitHub Issues:** [Report an issue](https://github.com/wazobia/laravel-auth-guard/issues)
+- **Email:** developer@wazobia.tech
+- **Documentation:** [Full Documentation](https://docs.wazobia.tech)
 
-## Troubleshooting
+---
 
-### Redis Connection Issues
+## 📄 License
 
-Ensure Redis is properly configured in your `.env`:
+This package is open-sourced software licensed under the [MIT license](LICENSE.md).
 
-```env
-REDIS_HOST=127.0.0.1
-REDIS_PASSWORD=null
-REDIS_PORT=6379
-CACHE_DRIVER=redis
-```
+---
 
-### JWKS Fetch Errors
+<div align="center">
 
-Check that:
-1. Mercury service is accessible
-2. SIGNATURE_SHARED_SECRET is correct
-3. Project UUID exists in the JWT or ATHENS_PROJECT_UUID is set
+**Made with ❤️ by [Wazobia Technologies](https://wazobia.tech)**
 
-### Token Validation Errors
+⭐ Star us on GitHub if this helped you!
 
-Common issues:
-- Expired tokens (check JWT_LEEWAY setting)
-- Wrong issuer (verify MERCURY_BASE_URL)
-- Invalid signature (ensure JWKS endpoint is returning correct keys)
-
-## Support
-
-For issues, questions, or contributions, please visit:
-[GitHub Repository](https://github.com/wazobia/laravel-auth-guard)
-
-## License
-
-MIT License. See [LICENSE](LICENSE) file for details.
+</div>

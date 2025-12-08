@@ -4,129 +4,159 @@ namespace Wazobia\LaravelAuthGuard\Services;
 
 use Wazobia\LaravelAuthGuard\Exceptions\ProjectAuthenticationException;
 use Wazobia\LaravelAuthGuard\Contracts\ProjectAuthenticatable;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Log;
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+use Wazobia\LaravelAuthGuard\Services\JwksService;
 
 class ProjectAuthService implements ProjectAuthenticatable
 {
-    private string $athensBaseUrl;
-    private string $sharedSecret;
-    private int $cacheTtl;
     private string $cachePrefix;
 
-    public function __construct(
-        string $athensBaseUrl,
-        string $sharedSecret,
-        int $cacheTtl = 900
-    ) {
-        $this->athensBaseUrl = $athensBaseUrl;
-        $this->sharedSecret = $sharedSecret;
-        $this->cacheTtl = $cacheTtl;
+    public function __construct()
+    {
         $this->cachePrefix = config('auth-guard.cache.prefix', 'auth_guard');
     }
 
-    /**
-     * Authenticate project credentials
-     */
-    public function authenticate(string $apiKey, string $secret, string $service): array
+    public function authenticateWithToken(string $token, string $serviceId): array
     {
-        $cacheKey = "{$this->cachePrefix}:project:{$apiKey}:{$secret}:{$service}";
-        
-        // Check cache first
-        $cachedProject = Cache::get($cacheKey);
-        if ($cachedProject) {
-            $this->log('Project cache hit', ['projectUuid' => $cachedProject['projectUuid']]);
-            return $cachedProject;
-        }
-
-        $this->log('Project cache miss - verifying with Athens');
-        $project = $this->verifyWithAthens($apiKey, $secret, $service);
-        
-        // Cache the result
-        Cache::put($cacheKey, $project, $this->cacheTtl);
-        
-        $this->log('Project authenticated', ['projectUuid' => $project['projectUuid']]);
-        
-        return $project;
-    }
-
-    /**
-     * Verify credentials with Athens service
-     */
-    private function verifyWithAthens(string $appId, string $secret, string $service): array
-    {
-        $credentials = base64_encode("{$appId}:{$secret}:{$service}");
-        $timestamp = (string) (time() * 1000);
-        $algorithm = config('auth-guard.signature.algorithm', 'sha256');
-        $signature = hash_hmac(
-            $algorithm,
-            'GET' . '/auth' . $timestamp,
-            $this->sharedSecret
-        );
-
         try {
-            $timeout = config('auth-guard.athens.timeout', 10);
-            $response = Http::timeout($timeout)
-                ->withHeaders([
-                    'Authorization' => "Basic {$credentials}",
-                    'X-Timestamp' => $timestamp,
-                    'X-Signature' => $signature,
-                ])
-                ->get("{$this->athensBaseUrl}/auth");
+            $payload = $this->decodeAndVerify($token);
 
-            if (!$response->successful()) {
-                $errorMessage = $this->parseErrorResponse($response);
-                throw new ProjectAuthenticationException($errorMessage);
+            foreach (['project_uuid','enabled_services','token_id'] as $field) {
+                if (!isset($payload[$field])) {
+                    throw new ProjectAuthenticationException("Invalid project token: missing {$field}");
+                }
+            }
+            if (!is_array($payload['enabled_services'])) {
+                throw new ProjectAuthenticationException('Invalid project token: enabled_services must be array');
             }
 
-            $data = $response->json();
-            if (!$data) {
-                throw new ProjectAuthenticationException('No data received from Athens');
-            }
-
-            $this->log('Athens verification passed');
+            // Check token revocation using auth Redis connection (no prefix, matches Node.js)
+            $revocationKey = 'project_token:' . $payload['token_id'];
             
+            try {
+                // Use 'auth' connection without prefix
+                $redis = Redis::connection('auth');
+                $exists = (int) $redis->exists($revocationKey);
+                
+                $this->log('Redis token check', [
+                    'key' => $revocationKey,
+                    'exists' => $exists,
+                    'token_id' => $payload['token_id']
+                ]);
+                
+                if ($exists === 0) {
+                    throw new ProjectAuthenticationException('Token has been revoked or expired');
+                }
+            } catch (ProjectAuthenticationException $e) {
+                throw $e;
+            } catch (\Exception $e) {
+                $this->log('Redis connection error', ['error' => $e->getMessage()], 'error');
+                throw new ProjectAuthenticationException('Redis error during token revocation check: ' . $e->getMessage());
+            } finally {
+                Redis::connection('auth')->disconnect();
+            }
+
+            // Check secret version using auth connection
+            try {
+                $versionKey = 'project_secret_version:' . $payload['project_uuid'];
+                $redis = Redis::connection('auth');
+                $currentVersion = $redis->get($versionKey);
+                
+                if ($currentVersion !== null && $currentVersion !== false) {
+                    $currentVersion = (int) $currentVersion;
+                    $tokenVersion = (int) ($payload['secret_version'] ?? 0);
+                    
+                    if ($currentVersion > 0 && $tokenVersion < $currentVersion) {
+                        throw new ProjectAuthenticationException(
+                            'Token secret version outdated (token: ' . $tokenVersion . ', current: ' . $currentVersion . ')'
+                        );
+                    }
+                }
+            } catch (ProjectAuthenticationException $e) {
+                throw $e;
+            } catch (\Exception $e) {
+                $this->log('Secret version check failed', ['error' => $e->getMessage()], 'warning');
+            }
+
+            if (!in_array($serviceId, $payload['enabled_services'])) {
+                throw new ProjectAuthenticationException(
+                    "Service '{$serviceId}' not enabled for project {$payload['project_uuid']}", 403
+                );
+            }
+
+            $this->log('Project token validated successfully', [
+                'project_uuid' => $payload['project_uuid'],
+                'service_id' => $serviceId,
+                'token_id' => $payload['token_id']
+            ]);
+
             return [
-                'projectUuid' => $data['projectUuid'],
-                'projectName' => $data['projectName'],
-                // 'raw_response' => $data,
+                'project_uuid' => $payload['project_uuid'],
+                'enabled_services' => $payload['enabled_services'],
+                'secret_version' => $payload['secret_version'] ?? null,
+                'token_id' => $payload['token_id'],
+                'expires_at' => $payload['exp'] ?? null,
             ];
+
+        } catch (ProjectAuthenticationException $e) {
+            throw $e;
         } catch (\Exception $e) {
-            $this->log('Athens verification failed', ['error' => $e->getMessage()], 'error');
+            $this->log('Project token validation error', [
+                'error' => $e->getMessage(),
+                'service_id' => $serviceId
+            ], 'error');
             throw new ProjectAuthenticationException(
-                'Athens verification failed: ' . $e->getMessage()
+                'Token validation failed: ' . $e->getMessage()
             );
         }
     }
 
-    /**
-     * Parse error response from Athens
-     */
-    private function parseErrorResponse($response): string
+    public function authenticate(string $apiKey, string $secret, string $service): array
     {
-        $data = $response->json();
+        $this->log('Legacy authenticate method called - please migrate to authenticateWithToken', [
+            'api_key' => $apiKey,
+            'service' => $service
+        ], 'warning');
         
-        if (is_string($data)) {
-            return $data;
-        }
-        
-        if (is_array($data)) {
-            if (isset($data['message'])) {
-                return $data['message'];
-            }
-            if (isset($data['error'])) {
-                return $data['error'];
-            }
-            return 'Athens returned error: ' . json_encode($data);
-        }
-        
-        return "Athens returned {$response->status()}: {$response->body()}";
+        throw new ProjectAuthenticationException(
+            'Legacy App ID/Secret authentication is no longer supported. Please use project tokens.'
+        );
     }
 
-    /**
-     * Log message if logging is enabled
-     */
+    private function decodeAndVerify(string $token): array
+    {
+        try {
+            $jwks = app(JwksService::class);
+            $publicKey = $jwks->getProjectTokenPublicKey($token);
+
+            $algorithm = config('auth-guard.jwt.algorithm', 'RS512');
+            JWT::$leeway = config('auth-guard.jwt.leeway', 0);
+
+            $decoded = JWT::decode($token, new Key($publicKey, $algorithm));
+            $payload = (array) $decoded;
+
+            $now = time();
+            if (isset($payload['nbf']) && $now < (int) $payload['nbf']) {
+                throw new ProjectAuthenticationException('Token cannot be used yet (nbf)');
+            }
+            if (isset($payload['iat']) && $now < (int) $payload['iat']) {
+                throw new ProjectAuthenticationException('Token issued in the future (iat)');
+            }
+            if (isset($payload['exp']) && $now >= (int) $payload['exp']) {
+                throw new ProjectAuthenticationException('Token has expired (exp)');
+            }
+
+            return $payload;
+        } catch (ProjectAuthenticationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            throw new ProjectAuthenticationException('Project token verification failed: ' . $e->getMessage());
+        }
+    }
+
     private function log(string $message, array $context = [], string $level = 'info'): void
     {
         if (config('auth-guard.logging.enabled', true)) {

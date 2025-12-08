@@ -16,20 +16,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Athens Service Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Configuration for project authentication service
-    |
-    */
-    'athens' => [
-        'base_url' => env('ATHENS_BASE_URL', 'http://localhost:3000'),
-        'project_uuid' => env('ATHENS_PROJECT_UUID'),
-        'timeout' => env('ATHENS_TIMEOUT', 10),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
     | Signature Configuration
     |--------------------------------------------------------------------------
     |
@@ -84,6 +70,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Default Project UUID (fallback for per-project JWKS)
+    |--------------------------------------------------------------------------
+    |
+    | Matches Node/Python behavior: if a user JWT does not include project_uuid
+    | claim, we fall back to this value (NEXUS_ID). If neither is present, auth
+    | fails with an explicit error.
+    */
+    'default_project_uuid' => env('NEXUS_ID'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Service ID Configuration
+    |--------------------------------------------------------------------------
+    |
+    | The ID of the current service for project authentication
+    |
+    */
+    'service_id' => env('SERVICE_ID'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Headers Configuration
     |--------------------------------------------------------------------------
     |
@@ -92,8 +99,6 @@ return [
     */
     'headers' => [
         'jwt' => env('AUTH_JWT_HEADER', 'Authorization'),
-        'project_id' => env('AUTH_PROJECT_ID_HEADER', 'x-app-id'),
-        'project_secret' => env('AUTH_PROJECT_SECRET_HEADER', 'x-app-secret'),
-        'project_service' => env('AUTH_PROJECT_SERVICE_HEADER', 'x-service-id')
+        'project_token' => env('AUTH_PROJECT_TOKEN_HEADER', 'x-project-token'),
     ],
 ];

@@ -28,7 +28,7 @@ class AuthGuardServiceProvider extends ServiceProvider
         $this->app->singleton(JwksService::class, function ($app) {
             return new JwksService(
                 config('auth-guard.mercury.base_url'),
-                config('auth-guard.athens.project_uuid'),
+                config('auth-guard.default_project_uuid'),
                 config('auth-guard.signature.shared_secret')
             );
         });
@@ -42,11 +42,7 @@ class AuthGuardServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(ProjectAuthService::class, function ($app) {
-            return new ProjectAuthService(
-                config('auth-guard.athens.base_url'),
-                config('auth-guard.signature.shared_secret'),
-                config('auth-guard.cache.ttl')
-            );
+            return new ProjectAuthService();
         });
 
         // Register middleware aliases
@@ -93,16 +89,20 @@ class AuthGuardServiceProvider extends ServiceProvider
      */
     protected function registerGraphQLDirectives(): void
     {
-        $this->app->singleton('graphql.directive.jwtAuth', function () {
-            return new \Wazobia\LaravelAuthGuard\GraphQL\Directives\JwtAuthDirective();
-        });
+        // Register directive classes
+        $this->app->bind(
+            'Nuwave\Lighthouse\Schema\Directives\JwtAuthDirective',
+            \Wazobia\LaravelAuthGuard\GraphQL\Directives\JwtAuthDirective::class
+        );
 
-        $this->app->singleton('graphql.directive.projectAuth', function () {
-            return new \Wazobia\LaravelAuthGuard\GraphQL\Directives\ProjectAuthDirective();
-        });
+        $this->app->bind(
+            'Nuwave\Lighthouse\Schema\Directives\ProjectAuthDirective',
+            \Wazobia\LaravelAuthGuard\GraphQL\Directives\ProjectAuthDirective::class
+        );
 
-        $this->app->singleton('graphql.directive.combinedAuth', function () {
-            return new \Wazobia\LaravelAuthGuard\GraphQL\Directives\CombinedAuthDirective();
-        });
+        $this->app->bind(
+            'Nuwave\Lighthouse\Schema\Directives\CombinedAuthDirective',
+            \Wazobia\LaravelAuthGuard\GraphQL\Directives\CombinedAuthDirective::class
+        );
     }
 }

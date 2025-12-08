@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 use Wazobia\LaravelAuthGuard\Services\JwtAuthService;
 use Wazobia\LaravelAuthGuard\Exceptions\JwtAuthenticationException;
 
-class JwtAuthMiddleware
+class JwtAuthMiddlewareRaw
 {
     private JwtAuthService $authService;
 
@@ -17,55 +17,32 @@ class JwtAuthMiddleware
     }
 
     /**
-     * Handle an incoming request.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure  $next
-     * @return mixed
+     * Raw middleware that throws exceptions instead of returning JSON responses
+     * This matches the Node.js behavior more closely
      */
     public function handle(Request $request, Closure $next)
     {
-        try {
-            $headerName = config('auth-guard.headers.jwt', 'Authorization');
-            $token = $this->extractToken($request, $headerName);
-            
-            if (!$token) {
-                throw new JwtAuthenticationException('No authorization token provided');
-            }
-
-            $user = $this->authService->authenticate($token);
-            
-            // Attach user to request
-            $request->merge(['auth_user' => $user]);
-            $request->setUserResolver(function () use ($user) {
-                return (object) $user;
-            });
-
-            return $next($request);
-        } catch (JwtAuthenticationException $e) {
-            return response()->json([
-                'error' => 'JWT Authentication failed',
-                'message' => $e->getMessage()
-            ], 401);
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Authentication error',
-                'message' => $e->getMessage()
-            ], 401);
+        $headerName = config('auth-guard.headers.jwt', 'Authorization');
+        $token = $this->extractToken($request, $headerName);
+        
+        if (!$token) {
+            throw new JwtAuthenticationException('No authorization header provided');
         }
+
+        $user = $this->authService->authenticate($token);
+        
+        $request->merge(['user' => $user]);
+        $request->setUserResolver(function () use ($user) {
+            return (object) $user;
+        });
+
+        return $next($request);
     }
 
-    /**
-     * Extract token from request header
-     *
-     * @param Request $request
-     * @param string $headerName
-     * @return string|null
-     */
     private function extractToken(Request $request, string $headerName): ?string
     {
         $authHeader = $request->header($headerName);
-        if (!$authHeader) {
+        if (!authHeader) {
             return null;
         }
 

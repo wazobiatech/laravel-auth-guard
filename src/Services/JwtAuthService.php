@@ -28,27 +28,22 @@ class JwtAuthService implements JwtAuthenticatable
     }
 
     /**
-     * Authenticate JWT token
+     * Authenticate JWT token (user token)
      */
     public function authenticate(string $token): array
     {
-        // Check cache first
         $cachedUser = $this->getCachedToken($token);
         if ($cachedUser) {
             $this->log('JWT cache hit', ['user' => $cachedUser['email']]);
             return $cachedUser;
         }
 
-        // Decode token to get project UUID
         $projectUuid = $this->extractProjectUuid($token);
         
-        // Get public key from JWKS
         $publicKey = $this->jwksService->getPublicKey($token, $projectUuid);
         
-        // Validate token
         $user = $this->validateToken($token, $publicKey);
         
-        // Cache the result
         $this->cacheToken($token, $user);
         
         $this->log('JWT authenticated', ['user' => $user['email']]);
@@ -57,7 +52,7 @@ class JwtAuthService implements JwtAuthenticatable
     }
 
     /**
-     * Extract project UUID from token
+     * Extract project UUID from token payload if present
      */
     private function extractProjectUuid(string $token): ?string
     {
@@ -75,7 +70,7 @@ class JwtAuthService implements JwtAuthenticatable
     }
 
     /**
-     * Validate JWT token
+     * Validate JWT user token
      */
     private function validateToken(string $token, string $publicKey): array
     {
@@ -112,7 +107,6 @@ class JwtAuthService implements JwtAuthenticatable
                 'uuid' => $sub['uuid'],
                 'email' => $sub['email'] ?? '',
                 'name' => $sub['name'] ?? '',
-                // 'raw_payload' => $payload,
             ];
         } catch (\Exception $e) {
             throw new JwtAuthenticationException(
@@ -138,7 +132,7 @@ class JwtAuthService implements JwtAuthenticatable
     private function cacheToken(string $token, array $user): void
     {
         try {
-            $tokenHash = substr(base64_encode($token), 0, 32);
+            $tokenHash = substr(hash('sha256', $token), 0, 32);
             $cacheKey = "{$this->cachePrefix}:validated_token:{$tokenHash}";
             Cache::put($cacheKey, $user, $this->cacheTtl);
         } catch (\Exception $e) {
@@ -152,7 +146,7 @@ class JwtAuthService implements JwtAuthenticatable
     private function getCachedToken(string $token): ?array
     {
         try {
-            $tokenHash = substr(base64_encode($token), 0, 32);
+            $tokenHash = substr(hash('sha256', $token), 0, 32);
             $cacheKey = "{$this->cachePrefix}:validated_token:{$tokenHash}";
             return Cache::get($cacheKey);
         } catch (\Exception $e) {
@@ -170,9 +164,6 @@ class JwtAuthService implements JwtAuthenticatable
         $this->log('Token revoked', ['jti' => $jti]);
     }
 
-    /**
-     * Log message if logging is enabled
-     */
     private function log(string $message, array $context = [], string $level = 'info'): void
     {
         if (config('auth-guard.logging.enabled', true)) {

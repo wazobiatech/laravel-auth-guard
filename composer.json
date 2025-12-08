@@ -17,7 +17,8 @@
         "illuminate/cache": "^9.0|^10.0|^11.0|^12.0",
         "firebase/php-jwt": "^6.0",
         "guzzlehttp/guzzle": "^7.0",
-        "phpseclib/phpseclib": "^3.0"
+        "phpseclib/phpseclib": "^3.0",
+        "predis/predis": "^2.0"
     },
     "require-dev": {
         "orchestra/testbench": "^7.0|^8.0",
