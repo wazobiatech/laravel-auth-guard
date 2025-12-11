@@ -22,6 +22,14 @@ class ProjectAuthMiddleware
             $tokenHeader = config('auth-guard.headers.project_token', 'x-project-token');
             $authHeader = $request->header($tokenHeader);
 
+            \Log::info('ProjectAuthMiddleware: Processing request', [
+                'expected_header' => $tokenHeader,
+                'header_found' => !empty($authHeader),
+                'header_value_preview' => $authHeader ? substr($authHeader, 0, 30) . '...' : null,
+                'request_method' => $request->method(),
+                'request_path' => $request->path()
+            ]);
+
             if (!$authHeader) {
                 \Log::warning('Missing project token header', [
                     'expected_header' => $tokenHeader,

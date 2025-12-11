@@ -95,7 +95,20 @@ class JwksService
                 ])
                 ->get($url);
 
+            \Log::info('JWT_RESPONSE: Per-project JWKS response', [
+                'status' => $response->status(),
+                'success' => $response->successful(),
+                'response_size' => strlen($response->body()),
+                'headers' => $response->headers(),
+                'project_uuid' => $projectUuid
+            ]);
+            
             if (!$response->successful()) {
+                \Log::error('JWT_ERROR: JWKS request failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'url' => $url
+                ]);
                 throw new JwtAuthenticationException(
                     "JWKS endpoint returned {$response->status()}: {$response->body()}"
                 );
@@ -186,7 +199,19 @@ class JwksService
                 ])
                 ->get($url);
 
+            \Log::info('JWT_RESPONSE: Global project JWKS response', [
+                'status' => $response->status(),
+                'success' => $response->successful(),
+                'response_size' => strlen($response->body()),
+                'headers' => $response->headers()
+            ]);
+            
             if (!$response->successful()) {
+                \Log::error('JWT_ERROR: Global JWKS request failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'url' => $url
+                ]);
                 throw new JwtAuthenticationException(
                     "Global project JWKS endpoint returned {$response->status()}: {$response->body()}"
                 );

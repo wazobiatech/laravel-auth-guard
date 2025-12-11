@@ -22,7 +22,20 @@ class ProjectAuthService implements ProjectAuthenticatable
     public function authenticateWithToken(string $token, string $serviceId): array
     {
         try {
+            \Log::emergency('PROJECT_TOKEN_DEBUG: Authentication started', [
+                'token_preview' => substr($token, 0, 50) . '...',
+                'token_length' => strlen($token),
+                'service_id' => $serviceId
+            ]);
+            
             $payload = $this->decodeAndVerify($token);
+            
+            $this->log('Project token successfully decoded', [
+                'payload_keys' => array_keys($payload),
+                'project_uuid' => $payload['project_uuid'] ?? 'missing',
+                'token_id' => $payload['token_id'] ?? 'missing',
+                'enabled_services_count' => is_array($payload['enabled_services'] ?? null) ? count($payload['enabled_services']) : 0
+            ]);
 
             foreach (['project_uuid','enabled_services','token_id'] as $field) {
                 if (!isset($payload[$field])) {
@@ -44,11 +57,12 @@ class ProjectAuthService implements ProjectAuthenticatable
                 $this->log('Redis token check', [
                     'key' => $revocationKey,
                     'exists' => $exists,
-                    'token_id' => $payload['token_id']
+                    'token_id' => $payload['token_id'],
+                    'logic' => 'blacklist - token valid if NOT in redis'
                 ]);
                 
-                if ($exists === 0) {
-                    throw new ProjectAuthenticationException('Token has been revoked or expired');
+                if ($exists === 1) {
+                    throw new ProjectAuthenticationException('Token has been revoked or blacklisted');
                 }
             } catch (ProjectAuthenticationException $e) {
                 throw $e;

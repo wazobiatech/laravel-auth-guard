@@ -105,48 +105,43 @@ This creates `config/auth-guard.php` in your project.
 
 ### Environment Variables
 
-Add these required variables to your `.env` file:
+Copy the `.env.sample` file from this package and add these required variables to your `.env` file:
+
+```bash
+cp vendor/wazobia/laravel-auth-guard/.env.sample .env.example
+```
+
+**Core Configuration:**
 
 ```properties
 # Mercury Authentication Service
-MERCURY_BASE_URL=https://mercury.{domain}.com
-MERCURY_TIMEOUT=10
+MERCURY_BASE_URL=https://mercury.tiadara.com
+SIGNATURE_SHARED_SECRET=your-shared-secret-here
 
-# HMAC Signature for JWKS Requests
-SIGNATURE_SHARED_SECRET=AAAA***************************************
-SIGNATURE_ALGORITHM=sha256
+# Service Configuration
+SERVICE_ID=your-service-id
 
-# Project Configuration
-NEXUS_ID=26337ab1-****-********-********
-SERVICE_ID=f4e2d3b1-****-****-****-************
-
-# Redis Configuration
-REDIS_CLIENT=predis
-REDIS_URL=redis://:password@localhost/0
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=null
-REDIS_DB=0
-REDIS_CACHE_DB=1
+# Redis Configuration (Required for Token Blacklisting)
+REDIS_URL=redis://localhost:6379
+REDIS_AUTH_DB=2
 
 # Cache Settings
-CACHE_EXPIRY_TIME=900
-AUTH_CACHE_TTL=900
-AUTH_CACHE_PREFIX=auth_guard
-AUTH_CACHE_DRIVER=redis
+AUTH_CACHE_TTL=3600
 
 # JWT Settings
-JWT_ALGORITHM=RS512
-JWT_LEEWAY=0
+JWT_ALGORITHM=RS256
 
 # Custom Headers (Optional)
 AUTH_JWT_HEADER=Authorization
-AUTH_PROJECT_TOKEN_HEADER=x-project-token
+AUTH_PROJECT_TOKEN_HEADER=X-Project-Token
 
-# Logging
-AUTH_GUARD_LOGGING=true
-AUTH_GUARD_LOG_CHANNEL=stack
+# Logging (Optional)
+AUTH_LOGGING_ENABLED=true
+AUTH_LOG_CHANNEL=single
 ```
+
+**Full Environment Variables:**
+See the included `.env.sample` file for all available configuration options with detailed documentation.
 
 > **💡 Docker Users:** If using Docker Compose, set `REDIS_HOST=redis` (the service name), not `127.0.0.1`
 
@@ -186,14 +181,15 @@ return [
             'database' => env('REDIS_CACHE_DB', '1'),
         ],
         
+        // Authentication connection for token blacklisting
         'auth' => [
             'url' => env('REDIS_URL'),
             'host' => env('REDIS_HOST', '127.0.0.1'),
             'username' => env('REDIS_USERNAME'),
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
-            'database' => env('REDIS_DB', '0'),
-            'prefix' => '', // No prefix!
+            'database' => env('REDIS_AUTH_DB', '2'), // Separate DB for auth tokens
+            'prefix' => '', // No prefix for auth tokens
         ],
     ],
 ];
@@ -212,8 +208,46 @@ Redis::ping();  // Should return: "+PONG"
 Redis::set('test', 'Hello');
 Redis::get('test');  // Should return: "Hello"
 
+// Test auth connection
+Redis::connection('auth')->ping();  // Should return: "+PONG"
+
 exit
 ```
+
+---
+
+## 🔐 Authentication Flow
+
+### JWT Authentication Process
+
+1. **Extract JWT Token** - Token extracted from `Authorization` header or custom header
+2. **Redis Blacklist Check** - Token JTI checked against Redis auth database
+   - If token JTI exists in Redis → **REJECTED** (token is blacklisted/revoked)
+   - If token JTI not found in Redis → **Continue validation**
+3. **JWKS Retrieval** - Public key fetched from Mercury service
+4. **Signature Validation** - JWT signature verified using JWKS public key
+5. **Payload Verification** - Token expiry, issuer, and claims validated
+6. **User Authentication** - User data extracted from token payload
+
+### Project Token Authentication Process
+
+1. **Extract Project Token** - Token extracted from `X-Project-Token` header
+2. **JWT Parsing** - Project token parsed as JWT
+3. **Redis Blacklist Check** - Token JTI checked against Redis (same as JWT auth)
+4. **Mercury Validation** - Token validated against Mercury service endpoints
+5. **Service Authorization** - Project access verified for the requesting service
+6. **Project Data Extraction** - Project information extracted from token
+
+### Token Blacklisting (Redis)
+
+The package uses **Redis as a blacklist system**:
+
+- **Valid Tokens**: Tokens NOT present in Redis are considered valid
+- **Revoked Tokens**: Tokens added to Redis are considered revoked/blacklisted
+- **Expiration**: Blacklist entries automatically expire based on token TTL
+- **Database**: Uses separate Redis database (`REDIS_AUTH_DB`) for isolation
+
+> **Important**: This is a blacklist approach - tokens are valid by default unless explicitly revoked and stored in Redis.
 
 ### Service Provider
 
@@ -652,19 +686,113 @@ class AuthController
 }
 ```
 
-### Token Revocation
+### Token Revocation & Blacklisting
+
+The package uses Redis as a **blacklist system** for token revocation:
 
 ```php
 use Wazobia\LaravelAuthGuard\Services\JwtAuthService;
 
 Route::post('/logout', function (JwtAuthService $jwtService, Request $request) {
     $jti = $request->input('jti'); // JWT ID from token payload
-    $ttl = 3600; // Revoke for 1 hour
+    $ttl = 3600; // Blacklist for 1 hour (or until token expires)
     
+    // Add token to Redis blacklist
     $jwtService->revokeToken($jti, $ttl);
     
-    return response()->json(['message' => 'Token revoked']);
+    return response()->json(['message' => 'Token revoked and blacklisted']);
 })->middleware('jwt.auth');
+```
+
+**How Blacklisting Works:**
+
+1. **Before Revocation**: Token JTI not in Redis → Token is valid ✅
+2. **After Revocation**: Token JTI stored in Redis → Token is blacklisted ❌
+3. **Auto-Expiry**: Blacklist entry expires when TTL reached or token expires
+4. **Validation**: All future requests check Redis first before validating signature
+
+**Manual Blacklist Management:**
+
+```php
+use Illuminate\Support\Facades\Redis;
+
+// Check if token is blacklisted
+$isBlacklisted = Redis::connection('auth')->exists("jti:{$tokenJti}");
+
+// Manually blacklist a token
+Redis::connection('auth')->setex("jti:{$tokenJti}", $ttl, 1);
+
+// Remove from blacklist (un-revoke)
+Redis::connection('auth')->del("jti:{$tokenJti}");
+```
+
+---
+
+## 🛠 Troubleshooting
+
+### Common Issues
+
+**1. "Redis connection [auth] not configured" Error**
+
+Make sure you have added the `auth` Redis connection to `config/database.php`:
+
+```php
+'redis' => [
+    // ... other connections
+    'auth' => [
+        'url' => env('REDIS_URL'),
+        'host' => env('REDIS_HOST', '127.0.0.1'),
+        'username' => env('REDIS_USERNAME'),
+        'password' => env('REDIS_PASSWORD'),
+        'port' => env('REDIS_PORT', '6379'),
+        'database' => env('REDIS_AUTH_DB', '2'),
+        'prefix' => '',
+    ],
+],
+```
+
+**2. "Project unauthenticated" Error**
+
+Enable logging to debug authentication flow:
+
+```env
+AUTH_LOGGING_ENABLED=true
+AUTH_LOG_CHANNEL=single
+```
+
+Check your logs for detailed authentication steps.
+
+**3. Token Always Rejected**
+
+Verify Redis blacklist behavior:
+
+```bash
+php artisan tinker
+```
+
+```php
+// Check if your token JTI is in Redis blacklist
+$jti = 'your-token-jti-here';
+$exists = Redis::connection('auth')->exists("jti:{$jti}");
+echo $exists ? 'Token is blacklisted' : 'Token is valid';
+```
+
+**4. Mercury Service Connection Issues**
+
+Test Mercury connectivity:
+
+```php
+$response = Http::get(config('auth-guard.mercury.base_url') . '/health');
+echo $response->successful() ? 'Mercury is reachable' : 'Mercury connection failed';
+```
+
+**5. Clear All Caches After Configuration Changes**
+
+```bash
+php artisan cache:clear
+php artisan config:clear
+php artisan route:clear
+composer dump-autoload
 ```
 
 ---

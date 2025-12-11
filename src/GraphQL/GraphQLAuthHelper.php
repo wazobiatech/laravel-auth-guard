@@ -72,6 +72,13 @@ class GraphQLAuthHelper
             $tokenHeader = config('auth-guard.headers.project_token', 'x-project-token');
             $authHeader = $request->header($tokenHeader);
             
+            \Log::info('GraphQL Project Authentication: Header check', [
+                'expected_header' => $tokenHeader,
+                'header_found' => !empty($authHeader),
+                'header_preview' => $authHeader ? substr($authHeader, 0, 30) . '...' : null,
+                'all_headers' => array_keys($request->headers->all())
+            ]);
+            
             if (!$authHeader) {
                 throw new Exception("No project token provided, required_header: '{$tokenHeader}'");
             }
@@ -80,6 +87,12 @@ class GraphQLAuthHelper
             $token = str_starts_with($authHeader, 'Bearer ') 
                 ? substr($authHeader, 7) 
                 : $authHeader;
+            
+            \Log::info('GraphQL Project Authentication: Token extracted', [
+                'had_bearer_prefix' => str_starts_with($authHeader, 'Bearer '),
+                'token_length' => strlen($token),
+                'token_preview' => substr($token, 0, 50) . '...',
+            ]);
             
             if (empty($token)) {
                 throw new Exception('Empty project token');
