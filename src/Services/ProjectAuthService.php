@@ -195,8 +195,49 @@ class ProjectAuthService implements ProjectAuthenticatable
                 'leeway' => JWT::$leeway
             ]);
 
-            $decoded = JWT::decode($token, new Key($publicKey, $algorithm));
-            $payload = (array) $decoded;
+            try {
+                \Log::info('PROJECT_TOKEN_VERIFY: Attempting JWT decode with Firebase JWT library');
+                $decoded = JWT::decode($token, new Key($publicKey, $algorithm));
+                \Log::info('PROJECT_TOKEN_VERIFY: JWT decode successful');
+                $payload = (array) $decoded;
+                \Log::debug('PROJECT_TOKEN_VERIFY: Payload converted to array', [
+                    'payload_size' => count($payload)
+                ]);
+            } catch (\Firebase\JWT\ExpiredException $e) {
+                \Log::error('PROJECT_TOKEN_ERROR: JWT expired during decode', [
+                    'error' => $e->getMessage(),
+                    'current_time' => time(),
+                    'current_time_readable' => date('Y-m-d H:i:s')
+                ]);
+                throw new ProjectAuthenticationException('Token has expired: ' . $e->getMessage());
+            } catch (\Firebase\JWT\SignatureInvalidException $e) {
+                \Log::error('PROJECT_TOKEN_ERROR: JWT signature invalid', [
+                    'error' => $e->getMessage(),
+                    'pem_length' => strlen($publicKey)
+                ]);
+                throw new ProjectAuthenticationException('Invalid token signature: ' . $e->getMessage());
+            } catch (\Firebase\JWT\BeforeValidException $e) {
+                \Log::error('PROJECT_TOKEN_ERROR: JWT not yet valid', [
+                    'error' => $e->getMessage(),
+                    'current_time' => time(),
+                    'current_time_readable' => date('Y-m-d H:i:s')
+                ]);
+                throw new ProjectAuthenticationException('Token not yet valid: ' . $e->getMessage());
+            } catch (\Firebase\JWT\DomainException $e) {
+                \Log::error('PROJECT_TOKEN_ERROR: JWT domain error', [
+                    'error' => $e->getMessage(),
+                    'algorithm' => $algorithm
+                ]);
+                throw new ProjectAuthenticationException('Token format error: ' . $e->getMessage());
+            } catch (\Exception $e) {
+                \Log::error('PROJECT_TOKEN_ERROR: Unexpected JWT decode error', [
+                    'error' => $e->getMessage(),
+                    'error_class' => get_class($e),
+                    'algorithm' => $algorithm,
+                    'pem_preview' => substr($publicKey, 0, 100) . '...'
+                ]);
+                throw new ProjectAuthenticationException('JWT decode failed: ' . $e->getMessage());
+            }
 
             \Log::info('PROJECT_TOKEN_VERIFY: JWT decoded successfully', [
                 'payload_keys' => array_keys($payload),
