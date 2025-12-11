@@ -61,7 +61,7 @@ class ProjectAuthService implements ProjectAuthenticatable
                     'logic' => 'blacklist - token valid if NOT in redis'
                 ]);
                 
-                if ($exists === 1) {
+                if ($exists === 0) {
                     throw new ProjectAuthenticationException('Token has been revoked or blacklisted');
                 }
             } catch (ProjectAuthenticationException $e) {

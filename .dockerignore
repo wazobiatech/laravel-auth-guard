@@ -1,0 +1,70 @@
+# Docker ignore file for Laravel Auth Guard package
+
+# Git and version control
+.git/
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# PHP dependencies (will be installed in container)
+# vendor/
+
+# Environment and configuration files
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+logs/
+*.log
+tmp/
+temp/
+cache/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# PHPUnit and testing
+.phpunit.result.cache
+coverage/
+.coverage/
+
+# Docker files (avoid recursive copying)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation build files
+docs/_build/
+docs/.doctrees/
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Lock files (composer.lock should be included)
+# package-lock.json
+# yarn.lock
+
+# Build artifacts
+build/
+dist/

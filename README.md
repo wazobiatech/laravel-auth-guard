@@ -118,12 +118,8 @@ cp vendor/wazobia/laravel-auth-guard/.env.sample .env.example
 MERCURY_BASE_URL=https://mercury.tiadara.com
 SIGNATURE_SHARED_SECRET=your-shared-secret-here
 
-# Service Configuration
+# Service Configuration  
 SERVICE_ID=your-service-id
-
-# Redis Configuration (Required for Token Blacklisting)
-REDIS_URL=redis://localhost:6379
-REDIS_AUTH_DB=2
 
 # Cache Settings
 AUTH_CACHE_TTL=3600
@@ -138,6 +134,14 @@ AUTH_PROJECT_TOKEN_HEADER=X-Project-Token
 # Logging (Optional)
 AUTH_LOGGING_ENABLED=true
 AUTH_LOG_CHANNEL=single
+```
+
+**Redis Configuration (Application Level):**
+The package uses your Laravel application's existing Redis configuration. You only need to add a Redis database number for the auth connection:
+
+```properties
+# Add to your existing Redis configuration
+REDIS_AUTH_DB=2
 ```
 
 **Full Environment Variables:**
