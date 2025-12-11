@@ -50,24 +50,42 @@ class ProjectAuthService implements ProjectAuthenticatable
             $revocationKey = 'project_token:' . $payload['token_id'];
             
             try {
+                \Log::info('PROJECT_TOKEN_REDIS: Checking token blacklist', [
+                    'token_id' => $payload['token_id'],
+                    'redis_key' => $revocationKey
+                ]);
+
                 // Use 'auth' connection without prefix
                 $redis = Redis::connection('auth');
                 $exists = (int) $redis->exists($revocationKey);
                 
-                $this->log('Redis token check', [
+                \Log::info('PROJECT_TOKEN_REDIS: Blacklist check result', [
                     'key' => $revocationKey,
                     'exists' => $exists,
                     'token_id' => $payload['token_id'],
-                    'logic' => 'blacklist - token valid if NOT in redis'
+                    'logic' => 'blacklist - token INVALID if IN redis, VALID if NOT in redis'
                 ]);
                 
-                if ($exists === 0) {
+                // CORRECT LOGIC: If token exists in Redis → it's blacklisted → reject
+                if ($exists === 1) {
+                    \Log::error('PROJECT_TOKEN_ERROR: Token found in blacklist', [
+                        'token_id' => $payload['token_id'],
+                        'redis_key' => $revocationKey
+                    ]);
                     throw new ProjectAuthenticationException('Token has been revoked or blacklisted');
                 }
+                
+                \Log::info('PROJECT_TOKEN_REDIS: Token not blacklisted, continuing', [
+                    'token_id' => $payload['token_id']
+                ]);
+                
             } catch (ProjectAuthenticationException $e) {
                 throw $e;
             } catch (\Exception $e) {
-                $this->log('Redis connection error', ['error' => $e->getMessage()], 'error');
+                \Log::error('PROJECT_TOKEN_ERROR: Redis connection error', [
+                    'error' => $e->getMessage(),
+                    'token_id' => $payload['token_id'] ?? 'unknown'
+                ]);
                 throw new ProjectAuthenticationException('Redis error during token revocation check: ' . $e->getMessage());
             } finally {
                 Redis::connection('auth')->disconnect();
@@ -95,11 +113,28 @@ class ProjectAuthService implements ProjectAuthenticatable
                 $this->log('Secret version check failed', ['error' => $e->getMessage()], 'warning');
             }
 
+            \Log::info('PROJECT_TOKEN_AUTH: Checking service authorization', [
+                'required_service_id' => $serviceId,
+                'enabled_services' => $payload['enabled_services'],
+                'enabled_services_count' => count($payload['enabled_services']),
+                'project_uuid' => $payload['project_uuid']
+            ]);
+
             if (!in_array($serviceId, $payload['enabled_services'])) {
+                \Log::error('PROJECT_TOKEN_ERROR: Service not authorized', [
+                    'required_service_id' => $serviceId,
+                    'enabled_services' => $payload['enabled_services'],
+                    'project_uuid' => $payload['project_uuid']
+                ]);
                 throw new ProjectAuthenticationException(
                     "Service '{$serviceId}' not enabled for project {$payload['project_uuid']}", 403
                 );
             }
+
+            \Log::info('PROJECT_TOKEN_AUTH: Service authorization successful', [
+                'service_id' => $serviceId,
+                'project_uuid' => $payload['project_uuid']
+            ]);
 
             $this->log('Project token validated successfully', [
                 'project_uuid' => $payload['project_uuid'],
@@ -143,30 +178,86 @@ class ProjectAuthService implements ProjectAuthenticatable
     private function decodeAndVerify(string $token): array
     {
         try {
+            \Log::info('PROJECT_TOKEN_VERIFY: Starting JWT signature verification');
+            
             $jwks = app(JwksService::class);
             $publicKey = $jwks->getProjectTokenPublicKey($token);
+
+            \Log::info('PROJECT_TOKEN_VERIFY: Public key obtained, decoding JWT', [
+                'pem_length' => strlen($publicKey)
+            ]);
 
             $algorithm = config('auth-guard.jwt.algorithm', 'RS512');
             JWT::$leeway = config('auth-guard.jwt.leeway', 0);
 
+            \Log::debug('PROJECT_TOKEN_VERIFY: JWT settings', [
+                'algorithm' => $algorithm,
+                'leeway' => JWT::$leeway
+            ]);
+
             $decoded = JWT::decode($token, new Key($publicKey, $algorithm));
             $payload = (array) $decoded;
 
+            \Log::info('PROJECT_TOKEN_VERIFY: JWT decoded successfully', [
+                'payload_keys' => array_keys($payload),
+                'project_uuid' => $payload['project_uuid'] ?? 'missing',
+                'token_id' => $payload['token_id'] ?? 'missing',
+                'expires_at' => isset($payload['exp']) ? date('Y-m-d H:i:s', $payload['exp']) : 'missing'
+            ]);
+
+            // Time-based validation
             $now = time();
+            \Log::debug('PROJECT_TOKEN_VERIFY: Time validation', [
+                'current_time' => $now,
+                'current_time_readable' => date('Y-m-d H:i:s', $now),
+                'nbf' => $payload['nbf'] ?? 'not_set',
+                'iat' => $payload['iat'] ?? 'not_set',
+                'exp' => $payload['exp'] ?? 'not_set'
+            ]);
+
             if (isset($payload['nbf']) && $now < (int) $payload['nbf']) {
+                \Log::error('PROJECT_TOKEN_ERROR: Token not yet valid', [
+                    'nbf' => $payload['nbf'],
+                    'nbf_readable' => date('Y-m-d H:i:s', $payload['nbf']),
+                    'current_time' => $now
+                ]);
                 throw new ProjectAuthenticationException('Token cannot be used yet (nbf)');
             }
             if (isset($payload['iat']) && $now < (int) $payload['iat']) {
+                \Log::error('PROJECT_TOKEN_ERROR: Token issued in future', [
+                    'iat' => $payload['iat'],
+                    'iat_readable' => date('Y-m-d H:i:s', $payload['iat']),
+                    'current_time' => $now
+                ]);
                 throw new ProjectAuthenticationException('Token issued in the future (iat)');
             }
             if (isset($payload['exp']) && $now >= (int) $payload['exp']) {
+                \Log::error('PROJECT_TOKEN_ERROR: Token expired', [
+                    'exp' => $payload['exp'],
+                    'exp_readable' => date('Y-m-d H:i:s', $payload['exp']),
+                    'current_time' => $now
+                ]);
                 throw new ProjectAuthenticationException('Token has expired (exp)');
             }
 
+            \Log::info('PROJECT_TOKEN_SUCCESS: JWT verification completed successfully', [
+                'project_uuid' => $payload['project_uuid'] ?? 'missing',
+                'token_id' => $payload['token_id'] ?? 'missing'
+            ]);
+
             return $payload;
         } catch (ProjectAuthenticationException $e) {
+            \Log::error('PROJECT_TOKEN_ERROR: Authentication exception', [
+                'error' => $e->getMessage(),
+                'code' => $e->getCode()
+            ]);
             throw $e;
         } catch (\Exception $e) {
+            \Log::error('PROJECT_TOKEN_ERROR: Unexpected verification error', [
+                'error' => $e->getMessage(),
+                'error_class' => get_class($e),
+                'trace' => $e->getTraceAsString()
+            ]);
             throw new ProjectAuthenticationException('Project token verification failed: ' . $e->getMessage());
         }
     }
