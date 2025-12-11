@@ -1,0 +1,35 @@
+# Dependencies
+/vendor/
+/node_modules/
+composer.lock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+/logs/
+*.log
+
+# Cache
+/cache/
+/tmp/
+
+# Testing
+/coverage/
+phpunit.xml
+.phpunit.result.cache
+
+# Docker development files (if added back)
+docker-compose.override.yml

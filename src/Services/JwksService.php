@@ -75,7 +75,7 @@ class JwksService
         $cacheKey = "{$this->cachePrefix}:jwks:{$projectUuid}";
         
         return Cache::remember($cacheKey, 600, function () use ($projectUuid) {
-            $path = "auth/projects/{$projectUuid}/.well-known/jwks.json";
+            $path = "auth/project/.well-known/jwks.json";
             $url = "{$this->mercuryBaseUrl}/{$path}";
             
             $timestamp = (string) round(microtime(true) * 1000);
