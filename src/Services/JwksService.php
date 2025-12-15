@@ -25,6 +25,24 @@ class JwksService
     }
 
     /**
+     * Debug logging helper - only logs when JWT_DEBUG_LOGGING_ENABLED=true
+     */
+    private function debugLog(string $message, array $context = []): void
+    {
+        if (config('auth-guard.debug_logging.enabled', env('JWT_DEBUG_LOGGING_ENABLED', false))) {
+            \Log::info("[JWT-DEBUG] {$message}", $context);
+        }
+    }
+
+    /**
+     * Error logging helper - always logs errors regardless of debug flag
+     */
+    private function errorLog(string $message, array $context = []): void
+    {
+        \Log::error("[JWT-ERROR] {$message}", $context);
+    }
+
+    /**
      * Get public key for USER JWT verification (per-project key set)
      */
     public function getPublicKey(string $token, ?string $projectUuid): string
@@ -87,14 +105,62 @@ class JwksService
             );
 
             $timeout = config('auth-guard.mercury.timeout', 10);
-            $response = Http::timeout($timeout)
-                ->withHeaders([
-                    'Accept' => 'application/json',
-                    'User-Agent' => 'Laravel-AuthGuard/1.0',
-                    'X-Timestamp' => $timestamp,
-                    'X-Signature' => $signature,
-                ])
-                ->get($url);
+            
+            $this->debugLog('JWKS Request Starting', [
+                'url' => $url,
+                'timeout' => $timeout,
+                'project_uuid' => $projectUuid,
+                'mercury_base_url' => $this->mercuryBaseUrl,
+                'path' => $path,
+                'timestamp' => $timestamp,
+                'signature_preview' => substr($signature, 0, 20) . '...',
+                'shared_secret_preview' => substr($this->sharedSecret, 0, 10) . '...'
+            ]);
+            
+            try {
+                $this->debugLog('JWKS HTTP Request Initiating', [
+                    'url' => $url,
+                    'method' => 'GET',
+                    'headers' => [
+                        'Accept' => 'application/json',
+                        'User-Agent' => 'Laravel-AuthGuard/1.0',
+                        'X-Timestamp' => $timestamp,
+                        'X-Signature' => substr($signature, 0, 20) . '...',
+                    ]
+                ]);
+                
+                $response = Http::timeout($timeout)
+                    ->withHeaders([
+                        'Accept' => 'application/json',
+                        'User-Agent' => 'Laravel-AuthGuard/1.0',
+                        'X-Timestamp' => $timestamp,
+                        'X-Signature' => $signature,
+                    ])
+                    ->get($url);
+                
+                $this->debugLog('JWKS HTTP Response Received', [
+                    'url' => $url,
+                    'status_code' => $response->status(),
+                    'headers' => $response->headers(),
+                    'body_length' => strlen($response->body()),
+                    'body_preview' => substr($response->body(), 0, 300),
+                    'successful' => $response->successful()
+                ]);
+            
+            } catch (\Exception $e) {
+                $this->errorLog('JWKS HTTP Request Exception', [
+                    'url' => $url,
+                    'error_message' => $e->getMessage(),
+                    'exception_class' => get_class($e),
+                    'exception_code' => $e->getCode(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace_preview' => array_slice($e->getTrace(), 0, 3)
+                ]);
+                throw new JwtAuthenticationException(
+                    "JWKS request to {$url} failed: " . $e->getMessage()
+                );
+            }
             
             if (!$response->successful()) {
                 throw new JwtAuthenticationException(
@@ -178,14 +244,61 @@ class JwksService
             );
 
             $timeout = config('auth-guard.mercury.timeout', 10);
-            $response = Http::timeout($timeout)
-                ->withHeaders([
-                    'Accept' => 'application/json',
-                    'User-Agent' => 'Laravel-AuthGuard/1.0',
-                    'X-Timestamp' => $timestamp,
-                    'X-Signature' => $signature,
-                ])
-                ->get($url);
+            
+            $this->debugLog('Global Project JWKS Request Starting', [
+                'url' => $url,
+                'timeout' => $timeout,
+                'mercury_base_url' => $this->mercuryBaseUrl,
+                'path' => $path,
+                'cache_key' => $cacheKey,
+                'timestamp' => $timestamp,
+                'signature_preview' => substr($signature, 0, 20) . '...'
+            ]);
+            
+            try {
+                $this->debugLog('Global Project JWKS HTTP Request Initiating', [
+                    'url' => $url,
+                    'method' => 'GET',
+                    'headers' => [
+                        'Accept' => 'application/json',
+                        'User-Agent' => 'Laravel-AuthGuard/1.0',
+                        'X-Timestamp' => $timestamp,
+                        'X-Signature' => substr($signature, 0, 20) . '...',
+                    ]
+                ]);
+                
+                $response = Http::timeout($timeout)
+                    ->withHeaders([
+                        'Accept' => 'application/json',
+                        'User-Agent' => 'Laravel-AuthGuard/1.0',
+                        'X-Timestamp' => $timestamp,
+                        'X-Signature' => $signature,
+                    ])
+                    ->get($url);
+                
+                $this->debugLog('Global Project JWKS HTTP Response Received', [
+                    'url' => $url,
+                    'status_code' => $response->status(),
+                    'headers' => $response->headers(),
+                    'body_length' => strlen($response->body()),
+                    'body_preview' => substr($response->body(), 0, 300),
+                    'successful' => $response->successful()
+                ]);
+                
+            } catch (\Exception $e) {
+                $this->errorLog('Global Project JWKS HTTP Request Exception', [
+                    'url' => $url,
+                    'error_message' => $e->getMessage(),
+                    'exception_class' => get_class($e),
+                    'exception_code' => $e->getCode(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace_preview' => array_slice($e->getTrace(), 0, 3)
+                ]);
+                throw new JwtAuthenticationException(
+                    "Global project JWKS request to {$url} failed: " . $e->getMessage()
+                );
+            }
             
             if (!$response->successful()) {
                 throw new JwtAuthenticationException(
