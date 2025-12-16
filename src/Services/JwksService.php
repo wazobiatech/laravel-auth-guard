@@ -232,7 +232,7 @@ class JwksService
     private function fetchGlobalProjectJWKS(): array
     {
         $cacheKey = "{$this->cachePrefix}:jwks:project_global";
-        return Cache::remember($cacheKey, 18000, function () {
+        return Cache::remember($cacheKey, 18000, function () use ($cacheKey) {
             $path = 'auth/project/.well-known/jwks.json';
             $url = "{$this->mercuryBaseUrl}/{$path}";
 
